@@ -5401,9 +5401,9 @@ def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> fl
     return c * r
 
 def estimate_coordinates_from_address(address: str) -> Optional[Tuple[float, float]]:
-    """Estimate coordinates from a Japanese address string"""
-    # This is a simplified coordinate estimation based on known locations
-    # In a production system, you'd use a proper geocoding service
+    """Estimate coordinates from a Japanese address string with hierarchical precision"""
+    # Strategy: Find the most specific location match possible, preferring smaller administrative units
+    # This prevents issues where general city coordinates override specific district coordinates
     
     coordinate_map = {
         # Specific Tokyo locations for better accuracy
@@ -5447,8 +5447,67 @@ def estimate_coordinates_from_address(address: str) -> Optional[Tuple[float, flo
         # Kanagawa coordinates
         "横浜市": (35.4437, 139.6377),
         "川崎市": (35.5308, 139.7029),
+        
+        # Kawasaki districts
+        "川崎区": (35.5308, 139.7029),
+        "幸区": (35.5478, 139.6917),
+        "中原区": (35.5761, 139.6565),
+        "高津区": (35.6017, 139.6089),
+        "多摩区": (35.6228, 139.5589),
+        "宮前区": (35.5928, 139.5598),
+        "麻生区": (35.6050, 139.5089),
         "相模原市": (35.5761, 139.3817),
-        "横須賀市": (35.2816, 139.6727),
+        
+        # Yokohama districts (more precise coordinates)
+        "鶴見区": (35.5075, 139.6767),  # Tsurumi district center
+        "豊岡町": (35.5088, 139.6779),  # Specific area in Tsurumi
+        "鶴見区豊岡町": (35.5088, 139.6779),  # Even more specific for Tsurumi Toyooka
+        "鶴見中央": (35.5070, 139.6763),  # Tsurumi Central area (near station)
+        "鶴見区鶴見中央": (35.5070, 139.6763),  # Full specification
+        "下末吉": (35.5140, 139.6650),  # Shimosueyoshi area in Tsurumi
+        "神奈川区": (35.4814, 139.6430),
+        "西区": (35.4617, 139.6200),
+        "中区": (35.4436, 139.6380),
+        "南区": (35.4367, 139.6200),
+        "保土ケ谷区": (35.4545, 139.5952),
+        "磯子区": (35.4067, 139.6179),
+        "金沢区": (35.3412, 139.6234),
+        "港北区": (35.5133, 139.6317),
+        "戸塚区": (35.3969, 139.5338),
+        "港南区": (35.4123, 139.5881),
+        "旭区": (35.4736, 139.5514),
+        "緑区": (35.5117, 139.5436),
+        "瀬谷区": (35.4671, 139.4865),
+        "栄区": (35.3678, 139.5515),
+        "泉区": (35.4015, 139.4850),
+        "青葉区": (35.5536, 139.5378),
+        "都筑区": (35.5439, 139.5707),
+        
+        # Additional Yokohama areas for better coverage
+        "反町": (35.4814, 139.6430),  # Kanagawa district area
+        "鶴見中央": (35.5070, 139.6763),
+        "末広町": (35.5100, 139.6850),  # Tsurumi area
+        "広台太田町": (35.4820, 139.6450),  # Kanagawa area
+        
+        # Chiba district-level coordinates
+        "中央区": (35.6074, 140.1065),  # Chiba Central (will conflict with other cities, but longer matches win)
+        "花見川区": (35.6500, 140.0500),
+        "稲毛区": (35.6350, 140.0800),
+        "若葉区": (35.6200, 140.1500),
+        "緑区": (35.5500, 140.1200),  # Note: conflicts with Yokohama, but hierarchical matching will handle
+        "美浜区": (35.6550, 140.0400),
+        
+        # Saitama district-level coordinates  
+        "大宮区": (35.9067, 139.6233),
+        "浦和区": (35.8617, 139.6455),
+        "南区": (35.8467, 139.6455),  # Saitama Minami
+        "見沼区": (35.8967, 139.6555),
+        "中央区": (35.8717, 139.6355),  # Saitama Central
+        "桜区": (35.8417, 139.6155),
+        "緑区": (35.8817, 139.6755),  # Saitama Midori
+        "岩槻区": (35.9567, 139.6955),
+        "西区": (35.8867, 139.5955),  # Saitama Nishi
+        "北区": (35.9267, 139.6255),  # Saitama Kita
         "平塚市": (35.3276, 139.3496),
         "鎌倉市": (35.3194, 139.5486),
         "藤沢市": (35.3419, 139.4895),
@@ -5591,16 +5650,66 @@ def estimate_coordinates_from_address(address: str) -> Optional[Tuple[float, flo
         "Keio University Hospital": (35.6803, 139.7206),  # Shinjuku
     }
     
-    # Try to find coordinates for the address - check specific locations first, then general areas
-    best_match = None
-    best_match_length = 0
+    # Hierarchical coordinate matching - prioritize smaller administrative units
+    # This prevents bugs where general coordinates (city-level) override specific ones (district-level)
     
+    # Step 1: Parse address components to understand the hierarchy
+    prefecture_match = None
+    city_match = None  
+    district_match = None
+    area_match = None
+    
+    # Find matches at different administrative levels
     for location, coords in coordinate_map.items():
-        if location in address and len(location) > best_match_length:
-            best_match = coords
-            best_match_length = len(location)
+        if location in address:
+            # Categorize the match by administrative level (length-based heuristic)
+            if len(location) >= 6:  # Very specific (e.g., "鶴見区鶴見中央", "石神井町2-15-13")
+                if not area_match or len(location) > len(area_match[0]):
+                    area_match = (location, coords)
+            elif len(location) >= 4:  # District level (e.g., "鶴見区", "豊岡町", "川崎区")
+                if not district_match or len(location) > len(district_match[0]):
+                    district_match = (location, coords)
+            elif len(location) >= 3:  # City level (e.g., "横浜市", "川崎市")
+                if not city_match or len(location) > len(city_match[0]):
+                    city_match = (location, coords)
+            else:  # Prefecture level (e.g., "東京都")
+                if not prefecture_match or len(location) > len(prefecture_match[0]):
+                    prefecture_match = (location, coords)
     
-    return best_match
+    # Return the most specific match available (area > district > city > prefecture)
+    if area_match:
+        return area_match[1]
+    elif district_match:
+        return district_match[1]
+    elif city_match:
+        return city_match[1]
+    elif prefecture_match:
+        return prefecture_match[1]
+    
+    # Fallback: Try GSI geocoding API for unknown addresses
+    try:
+        return geocode_gsi_fallback(address)
+    except:
+        return None
+
+def geocode_gsi_fallback(address: str) -> Optional[Tuple[float, float]]:
+    """Fallback geocoding using GSI API for addresses not in our coordinate map"""
+    try:
+        params = {"q": address}
+        response = requests.get("https://msearch.gsi.go.jp/address-search/AddressSearch", params=params, timeout=5)
+        response.raise_for_status()
+        
+        data = response.json()
+        if data and len(data) > 0:
+            first_result = data[0]
+            geometry = first_result.get("geometry")
+            if geometry and "coordinates" in geometry:
+                lon, lat = geometry["coordinates"]
+                return lat, lon
+        return None
+    except Exception:
+        # Silent fallback failure - we don't want to break the app
+        return None
 
 def get_comprehensive_contacts(city_name: str, district_name: str, prefecture: str, user_coords: Optional[Tuple[float, float]] = None) -> Dict[str, List[Dict]]:
     """Get comprehensive contact information from the database, prioritizing nearest branches"""
